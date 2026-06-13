@@ -7,39 +7,138 @@
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body { width: 100%; height: 100%; overflow: hidden; background: #0b0e14; }
-      #app { width: 100vw; height: 100vh; display: block; }
-      #hud {
+      #app { width: 100vw; height: 100vh; display: block; cursor: none; }
+
+      .hud {
         position: fixed;
-        top: 16px;
-        left: 16px;
         font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
         color: #e6edf3;
-        font-size: 18px;
-        text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
         user-select: none;
         pointer-events: none;
       }
-      #hud .big { font-size: 28px; font-weight: 700; }
-      #help {
-        position: fixed;
-        bottom: 16px;
-        left: 16px;
+
+      /* Crosshair */
+      #crosshair {
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: 22px;
+        height: 22px;
+      }
+      #crosshair::before, #crosshair::after {
+        content: "";
+        position: absolute;
+        background: #e8fff5;
+        box-shadow: 0 0 2px rgba(0,0,0,0.9);
+      }
+      #crosshair::before { left: 50%; top: 0; width: 2px; height: 100%; transform: translateX(-50%); }
+      #crosshair::after  { top: 50%; left: 0; height: 2px; width: 100%; transform: translateY(-50%); }
+
+      /* Hit marker (flashes on hit) */
+      #hitmarker {
+        left: 50%; top: 50%;
+        transform: translate(-50%, -50%) rotate(45deg);
+        width: 18px; height: 18px;
+        opacity: 0;
+        transition: opacity 0.08s ease-out;
+      }
+      #hitmarker::before, #hitmarker::after {
+        content: ""; position: absolute; background: #ff5d5d;
+      }
+      #hitmarker::before { left: 50%; top: 0; width: 3px; height: 100%; transform: translateX(-50%); }
+      #hitmarker::after  { top: 50%; left: 0; height: 3px; width: 100%; transform: translateY(-50%); }
+
+      /* Bottom-left: health */
+      #health-wrap { left: 24px; bottom: 24px; }
+      #health-wrap .label { font-size: 12px; color: #8b949e; letter-spacing: 1px; }
+      #health-bar-bg {
+        width: 240px; height: 18px; margin-top: 4px;
+        background: rgba(255,255,255,0.12);
+        border: 1px solid rgba(255,255,255,0.25);
+        border-radius: 3px; overflow: hidden;
+      }
+      #health-bar { height: 100%; width: 100%; background: linear-gradient(90deg,#3fb950,#69db7c); }
+
+      /* Bottom-right: ammo */
+      #ammo-wrap { right: 28px; bottom: 22px; text-align: right; }
+      #ammo-wrap .ammo-now { font-size: 44px; font-weight: 800; line-height: 1; }
+      #ammo-wrap .ammo-reserve { font-size: 20px; color: #8b949e; }
+      #ammo-wrap .reloading { font-size: 14px; color: #ffd54a; }
+
+      /* Top-center: score */
+      #score-wrap { left: 50%; top: 18px; transform: translateX(-50%); text-align: center; }
+      #score-wrap .big { font-size: 22px; font-weight: 700; }
+      #score-wrap .sub { font-size: 12px; color: #8b949e; }
+
+      /* Pointer-lock prompt */
+      #lock-overlay {
+        position: fixed; inset: 0;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        background: rgba(11, 14, 20, 0.82);
+        color: #e6edf3;
         font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
-        color: #8b949e;
-        font-size: 13px;
-        user-select: none;
-        pointer-events: none;
+        cursor: pointer; z-index: 10;
+      }
+      #lock-overlay h1 { font-size: 56px; letter-spacing: 4px; margin-bottom: 8px; }
+      #lock-overlay .tag { color: #4c9aff; font-size: 15px; margin-bottom: 28px; }
+      #lock-overlay .play {
+        padding: 14px 40px; font-size: 20px; font-weight: 700;
+        background: #4c9aff; color: #06101f; border-radius: 8px;
+      }
+      #lock-overlay .controls { margin-top: 30px; font-size: 13px; color: #8b949e; line-height: 1.7; text-align: center; }
+      #lock-overlay .controls b { color: #c9d4e0; }
+      #lock-overlay.hidden { display: none; }
+
+      /* Floating combat text */
+      #fx-layer {
+        position: fixed; inset: 0;
+        pointer-events: none; overflow: hidden; z-index: 5;
+      }
+      .dmg {
+        position: absolute;
+        font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
+        font-weight: 800;
+        transform: translate(-50%, -50%);
+        white-space: nowrap;
+        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.9);
+        will-change: transform, opacity;
       }
     </style>
   </head>
   <body>
     <canvas id="app"></canvas>
-    <div id="hud">
-      <div class="big">Yasu3D</div>
-      <div>Coins: <span id="score">0</span> / <span id="total">0</span></div>
-      <div id="win" style="color:#3fb950;font-weight:700;"></div>
+
+    <div id="crosshair" class="hud"></div>
+    <div id="hitmarker" class="hud"></div>
+
+    <div id="score-wrap" class="hud">
+      <div class="big">Kills: <span id="score">0</span></div>
+      <div class="sub">34 dmg body &middot; headshots one-shot</div>
     </div>
-    <div id="help">WASD / Arrows to move &middot; Space to jump &middot; collect the gold coins</div>
+
+    <div id="health-wrap" class="hud">
+      <div class="label">HEALTH</div>
+      <div id="health-bar-bg"><div id="health-bar"></div></div>
+    </div>
+
+    <div id="ammo-wrap" class="hud">
+      <span class="ammo-now" id="ammo">30</span><span class="ammo-reserve">/<span id="reserve">90</span></span>
+      <div class="reloading" id="reloading" style="visibility:hidden;">RELOADING…</div>
+    </div>
+
+    <div id="fx-layer"></div>
+
+    <div id="lock-overlay">
+      <h1>YASU<span style="color:#4c9aff">3D</span></h1>
+      <div class="tag">browser FPS &middot; prototype</div>
+      <div class="play">▶ CLICK TO PLAY</div>
+      <div class="controls">
+        <b>WASD</b> move &nbsp;·&nbsp; <b>Mouse</b> look &nbsp;·&nbsp; <b>Left-click</b> shoot<br />
+        <b>Space</b> jump &nbsp;·&nbsp; <b>Shift</b> sprint &nbsp;·&nbsp; <b>R</b> reload &nbsp;·&nbsp; <b>Esc</b> release mouse
+      </div>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

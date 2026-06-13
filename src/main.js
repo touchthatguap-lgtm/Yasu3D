@@ -1,7 +1,12 @@
 import * as THREE from "three";
+import { initInput, consumeMouse, isLocked } from "./input.js";
+import { buildWorld } from "./world.js";
+import { Player } from "./player.js";
+import { Weapon } from "./weapon.js";
+import { FloatingText } from "./floatingText.js";
 
 // ---------------------------------------------------------------------------
-// Renderer & scene
+// Renderer / scene / camera
 // ---------------------------------------------------------------------------
 const canvas = document.getElementById("app");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -10,105 +15,40 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0b0e14);
-scene.fog = new THREE.Fog(0x0b0e14, 30, 80);
-
-const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 200);
+const camera = new THREE.PerspectiveCamera(80, 1, 0.05, 300);
+scene.add(camera); // camera holds the gun viewmodel, so it must be in the scene
 
 // ---------------------------------------------------------------------------
-// Lights
+// World, player, weapon
 // ---------------------------------------------------------------------------
-scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x202830, 0.6));
-
-const sun = new THREE.DirectionalLight(0xffffff, 1.4);
-sun.position.set(12, 20, 8);
-sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.near = 1;
-sun.shadow.camera.far = 60;
-sun.shadow.camera.left = -30;
-sun.shadow.camera.right = 30;
-sun.shadow.camera.top = 30;
-sun.shadow.camera.bottom = -30;
-scene.add(sun);
+const world = buildWorld(scene);
+const player = new Player(camera, [0, 25]);
+const weapon = new Weapon(scene, camera);
+const fx = new FloatingText(camera);
 
 // ---------------------------------------------------------------------------
-// Ground
+// HUD
 // ---------------------------------------------------------------------------
-const GROUND = 50;
-const ground = new THREE.Mesh(
-  new THREE.PlaneGeometry(GROUND, GROUND),
-  new THREE.MeshStandardMaterial({ color: 0x1b2433, roughness: 0.95 })
-);
-ground.rotation.x = -Math.PI / 2;
-ground.receiveShadow = true;
-scene.add(ground);
-
-const grid = new THREE.GridHelper(GROUND, GROUND, 0x30425c, 0x222d3d);
-grid.position.y = 0.01;
-scene.add(grid);
-
-// ---------------------------------------------------------------------------
-// Player
-// ---------------------------------------------------------------------------
-const player = new THREE.Mesh(
-  new THREE.BoxGeometry(1, 1, 1),
-  new THREE.MeshStandardMaterial({ color: 0x4c9aff, roughness: 0.4, metalness: 0.1 })
-);
-player.position.set(0, 0.5, 0);
-player.castShadow = true;
-scene.add(player);
-
-const PLAYER_SPEED = 9;
-const JUMP_VELOCITY = 8;
-const GRAVITY = -22;
-let velocityY = 0;
-let onGround = true;
-
-// ---------------------------------------------------------------------------
-// Coins
-// ---------------------------------------------------------------------------
-const COIN_COUNT = 12;
-const coins = [];
-const coinGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.12, 24);
-const coinMat = new THREE.MeshStandardMaterial({
-  color: 0xffd54a,
-  roughness: 0.3,
-  metalness: 0.7,
-  emissive: 0x3a2c00,
-});
-
-// Deterministic-ish scatter so coins never overlap the spawn point.
-for (let i = 0; i < COIN_COUNT; i++) {
-  const coin = new THREE.Mesh(coinGeo, coinMat);
-  const angle = (i / COIN_COUNT) * Math.PI * 2;
-  const radius = 6 + (i % 4) * 4;
-  coin.position.set(Math.cos(angle) * radius, 0.8, Math.sin(angle) * radius);
-  coin.rotation.x = Math.PI / 2;
-  coin.castShadow = true;
-  scene.add(coin);
-  coins.push(coin);
-}
-
+const ui = {
+  score: document.getElementById("score"),
+  ammo: document.getElementById("ammo"),
+  reserve: document.getElementById("reserve"),
+  reloading: document.getElementById("reloading"),
+  health: document.getElementById("health-bar"),
+  hitmarker: document.getElementById("hitmarker"),
+};
 let score = 0;
-const scoreEl = document.getElementById("score");
-const totalEl = document.getElementById("total");
-const winEl = document.getElementById("win");
-totalEl.textContent = String(COIN_COUNT);
+let hitmarkerTimer = 0;
+
+function flashHitmarker() {
+  ui.hitmarker.style.opacity = "1";
+  hitmarkerTimer = 0.12;
+}
 
 // ---------------------------------------------------------------------------
 // Input
 // ---------------------------------------------------------------------------
-const keys = new Set();
-const MOVE_KEYS = new Set([
-  "KeyW", "KeyA", "KeyS", "KeyD",
-  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space",
-]);
-window.addEventListener("keydown", (e) => {
-  if (MOVE_KEYS.has(e.code)) e.preventDefault();
-  keys.add(e.code);
-});
-window.addEventListener("keyup", (e) => keys.delete(e.code));
+initInput(canvas, document.getElementById("lock-overlay"));
 
 // ---------------------------------------------------------------------------
 // Resize
@@ -127,68 +67,62 @@ resize();
 // Game loop
 // ---------------------------------------------------------------------------
 const clock = new THREE.Clock();
-const half = GROUND / 2 - 0.5;
 
-function update(dt) {
-  // Horizontal movement
-  let dx = 0;
-  let dz = 0;
-  if (keys.has("KeyW") || keys.has("ArrowUp")) dz -= 1;
-  if (keys.has("KeyS") || keys.has("ArrowDown")) dz += 1;
-  if (keys.has("KeyA") || keys.has("ArrowLeft")) dx -= 1;
-  if (keys.has("KeyD") || keys.has("ArrowRight")) dx += 1;
-
-  if (dx !== 0 || dz !== 0) {
-    const len = Math.hypot(dx, dz);
-    player.position.x += (dx / len) * PLAYER_SPEED * dt;
-    player.position.z += (dz / len) * PLAYER_SPEED * dt;
-  }
-
-  // Keep player on the field
-  player.position.x = THREE.MathUtils.clamp(player.position.x, -half, half);
-  player.position.z = THREE.MathUtils.clamp(player.position.z, -half, half);
-
-  // Jump + gravity
-  if (keys.has("Space") && onGround) {
-    velocityY = JUMP_VELOCITY;
-    onGround = false;
-  }
-  velocityY += GRAVITY * dt;
-  player.position.y += velocityY * dt;
-  if (player.position.y <= 0.5) {
-    player.position.y = 0.5;
-    velocityY = 0;
-    onGround = true;
-  }
-
-  // Coins spin + collection
-  for (const coin of coins) {
-    if (!coin.visible) continue;
-    coin.rotation.z += dt * 3;
-    const dxC = coin.position.x - player.position.x;
-    const dzC = coin.position.z - player.position.z;
-    if (dxC * dxC + dzC * dzC < 1.0) {
-      coin.visible = false;
-      score++;
-      scoreEl.textContent = String(score);
-      if (score === COIN_COUNT) winEl.textContent = "All coins collected! 🎉";
-    }
-  }
-
-  // Chase camera
-  const camTarget = new THREE.Vector3(
-    player.position.x,
-    player.position.y + 6,
-    player.position.z + 11
-  );
-  camera.position.lerp(camTarget, 1 - Math.pow(0.001, dt));
-  camera.lookAt(player.position.x, player.position.y + 0.5, player.position.z);
-}
-
-function animate() {
+function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
-  update(dt);
+  const mouse = consumeMouse();
+
+  if (isLocked()) {
+    player.update(dt, mouse, world.colliders);
+
+    // Auto-fire while holding the mouse (weapon enforces its own cooldown).
+    if (mouse.left) {
+      const hit = weapon.tryShoot(world.targets, world.solids, (info) => {
+        // Floating damage number at the hit point.
+        if (info.headshot) {
+          fx.spawn(info.point, `${info.damage} HEADSHOT`, { color: "#ffd54a", size: 26, life: 1.1 });
+        } else {
+          fx.spawn(info.point, String(info.damage), { color: "#ff6b6b", size: 22 });
+        }
+        if (info.killed) {
+          // Pop a KILL tag slightly above the hit.
+          const killPos = info.point.clone();
+          killPos.y += 0.6;
+          fx.spawn(killPos, "KILL", { color: "#3fb950", size: 24, life: 1.2, rise: 1.0 });
+          score++;
+          ui.score.textContent = String(score);
+        }
+      });
+      if (hit) flashHitmarker();
+    }
+    if (mouseReload) weapon.reload();
+  }
+
+  weapon.update(dt, world.targets);
+  fx.update(dt);
+
+  // HUD
+  ui.ammo.textContent = String(weapon.ammo);
+  ui.reserve.textContent = String(weapon.reserve);
+  ui.reloading.style.visibility = weapon.reloading > 0 ? "visible" : "hidden";
+  ui.health.style.width = `${player.health}%`;
+
+  if (hitmarkerTimer > 0) {
+    hitmarkerTimer -= dt;
+    if (hitmarkerTimer <= 0) ui.hitmarker.style.opacity = "0";
+  }
+
   renderer.render(scene, camera);
-  requestAnimationFrame(animate);
+  requestAnimationFrame(frame);
 }
-animate();
+
+// Reload key (R) — tracked separately since it's an edge action.
+let mouseReload = false;
+window.addEventListener("keydown", (e) => {
+  if (e.code === "KeyR") mouseReload = true;
+});
+window.addEventListener("keyup", (e) => {
+  if (e.code === "KeyR") mouseReload = false;
+});
+
+frame();

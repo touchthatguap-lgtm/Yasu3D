@@ -19,12 +19,13 @@ function randomId() {
 }
 
 export class Lobby {
-  constructor(code, playerName, { host = false } = {}) {
+  constructor(code, playerName, { host = false, map = null } = {}) {
     this.code = code;
     this.playerName = playerName;
     this.host = host;
+    this.map = map; // the host's chosen map; joiners read it from presence
     this.id = randomId();
-    this.players = []; // [{ id, name, host, self }]
+    this.players = []; // [{ id, name, host, self, map }]
     this.channel = null;
     this.onChange = null; // (players) => void, when the player list changes
     this.onState = null;  // (payload) => void, a remote player's movement
@@ -37,7 +38,7 @@ export class Lobby {
   async join() {
     if (!this.online) {
       // Offline / no Supabase: solo lobby so the user can still deploy.
-      this.players = [{ id: this.id, name: this.playerName, host: true, self: true }];
+      this.players = [{ id: this.id, name: this.playerName, host: true, self: true, map: this.map }];
       this._emit();
       return;
     }
@@ -70,6 +71,7 @@ export class Lobby {
           name: meta.name || "Player",
           host: Boolean(meta.host),
           self: key === this.id,
+          map: meta.map || null,
         });
       }
       // Stable order: host first, then by name.
@@ -80,7 +82,7 @@ export class Lobby {
 
     await this.channel.subscribe(async (status) => {
       if (status === "SUBSCRIBED") {
-        await this.channel.track({ name: this.playerName, host: this.host });
+        await this.channel.track({ name: this.playerName, host: this.host, map: this.map });
       }
     });
   }

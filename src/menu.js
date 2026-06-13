@@ -2,19 +2,34 @@ import { WEAPONS, weaponsForSlot } from "./weapons.js";
 import { Lobby, generateCode } from "./lobby.js";
 import { supabaseReady } from "./supabase.js";
 import { GunPreview } from "./gunPreview.js";
+import { CHARACTERS, characterList } from "./characters.js";
+import {
+  getCurrentUser,
+  loadoutFromUser,
+  saveLoadout,
+  characterFromUser,
+  saveCharacter,
+} from "./auth.js";
 
 // Full-screen tabbed menu:
 //   Play tab    -> name, big Play / Create / Join buttons
 //   Loadout tab -> Primary/Secondary sub-tabs, big spinning preview, gun picker
 // Calls onDeploy({ primary, secondary }, lobby) when the player starts a match.
 export class Menu {
-  constructor({ onDeploy }) {
+  constructor({ onDeploy, onOpenMapEditor, onLogout }) {
     this.onDeploy = onDeploy;
+    this.onOpenMapEditor = onOpenMapEditor;
+    this.onLogout = onLogout;
+    this.mapName = null; // null = default arena
     this.loadout = {
       primary: weaponsForSlot("primary")[0]?.name,
       secondary: weaponsForSlot("secondary")[0]?.name,
     };
-    this.playerName = "Player" + Math.floor(1000 + Math.random() * 9000);
+    this.character = characterList()[0]?.name;
+    // Set from the signed-in account via setPlayer(); this is just a fallback.
+    this.playerName = "Player";
+    // Whether the signed-in user may open the map editor (set by main.js).
+    this.canEditMaps = false;
     this.lobby = null;
 
     this.activeTab = "play";
@@ -37,6 +52,37 @@ export class Menu {
     if (this.preview) this.preview.stop();
   }
 
+  // Bind the signed-in account's username as the in-game name. Re-renders the
+  // header so it shows immediately.
+  setPlayer(username) {
+    this.playerName = username || "Player";
+    const el = this.root.querySelector(".m-uname");
+    if (el) el.textContent = this.playerName;
+  }
+
+  // Pull the loadout saved on the account and apply it (validating that each
+  // weapon still exists and fits its slot). Called on login/session resume.
+  async loadSavedLoadout() {
+    const user = await getCurrentUser();
+
+    const saved = loadoutFromUser(user);
+    if (saved) {
+      if (saved.primary && WEAPONS[saved.primary]?.slot === "primary") {
+        this.loadout.primary = saved.primary;
+      }
+      if (saved.secondary && WEAPONS[saved.secondary]?.slot === "secondary") {
+        this.loadout.secondary = saved.secondary;
+      }
+    }
+
+    const char = characterFromUser(user);
+    if (char && CHARACTERS[char]) this.character = char;
+
+    // Reflect loaded selections if the relevant tab is already open.
+    if (this.activeTab === "loadout") this._refreshLoadout();
+    else if (this.activeTab === "characters") this._renderCharacters();
+  }
+
   // ------------------------------------------------------------- Main (tabbed)
   showMain() {
     this.root.innerHTML = `
@@ -45,14 +91,28 @@ export class Menu {
         <div class="m-tabs">
           <button data-tab="play">Play</button>
           <button data-tab="loadout">Loadout</button>
+          <button data-tab="characters">Characters</button>
+          ${this.canEditMaps ? `<button data-tab="editor">Map Editor</button>` : ""}
         </div>
         <div class="m-spacer"></div>
+        <div class="m-user">
+          <span class="m-uname">${escapeHtml(this.playerName)}</span>
+          <button class="m-logout" title="Sign out">⏏ Sign out</button>
+        </div>
       </div>
       <div class="m-content"></div>
     `;
     this.root.querySelectorAll(".m-tabs button").forEach((b) => {
-      b.addEventListener("click", () => this._setTab(b.dataset.tab));
+      b.addEventListener("click", () => {
+        if (b.dataset.tab === "editor") {
+          if (this.onOpenMapEditor) this.onOpenMapEditor();
+          return;
+        }
+        this._setTab(b.dataset.tab);
+      });
     });
+    const logoutBtn = this.root.querySelector(".m-logout");
+    if (logoutBtn) logoutBtn.addEventListener("click", () => this.onLogout && this.onLogout());
     this._setTab(this.activeTab);
   }
 
@@ -64,6 +124,8 @@ export class Menu {
     if (tab === "play") {
       if (this.preview) this.preview.stop();
       this._renderPlay();
+    } else if (tab === "characters") {
+      this._renderCharacters();
     } else {
       this._renderLoadout();
     }
@@ -74,11 +136,7 @@ export class Menu {
     const content = this.root.querySelector(".m-content");
     content.innerHTML = `
       <div class="m-play">
-        <div class="m-name">
-          <label>NAME</label>
-          <input id="m-name-input" maxlength="16" value="${escapeAttr(this.playerName)}" />
-        </div>
-        <button class="m-big m-go" id="m-solo">▶ PLAY<span class="m-sm">solo practice</span></button>
+        <button class="m-big m-go" id="m-solo">▶ PLAY<span class="m-sm">choose a map · solo practice</span></button>
         <div class="m-or">— or play with friends —</div>
         <button class="m-big m-blue" id="m-create">＋ CREATE LOBBY</button>
         <div class="m-join">
@@ -88,11 +146,8 @@ export class Menu {
         ${supabaseReady ? "" : `<div class="m-warn">⚠ Supabase not configured — online lobbies disabled, solo only.</div>`}
       </div>
     `;
-    content.querySelector("#m-name-input").addEventListener("input", (e) => {
-      this.playerName = e.target.value.trim() || this.playerName;
-    });
-    content.querySelector("#m-solo").addEventListener("click", () => this._deploy(null));
-    content.querySelector("#m-create").addEventListener("click", () => this._createLobby());
+    content.querySelector("#m-solo").addEventListener("click", () => this._showMapSelect("solo"));
+    content.querySelector("#m-create").addEventListener("click", () => this._showMapSelect("lobby"));
     content.querySelector("#m-join").addEventListener("click", () => {
       const code = content.querySelector("#m-code").value.trim().toUpperCase();
       if (code.length >= 4) this._joinLobby(code);
@@ -100,6 +155,57 @@ export class Menu {
     content.querySelector("#m-code").addEventListener("input", (e) => {
       e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
     });
+  }
+
+  // ----------------------------------------------------------- Map select step
+  // Shown after clicking Play / Create Lobby. Picking a map launches that mode.
+  //   mode: "solo"  -> deploy solo on the chosen map
+  //         "lobby" -> create a lobby (host plays the chosen map)
+  async _showMapSelect(mode) {
+    const content = this.root.querySelector(".m-content");
+    content.innerHTML = `
+      <div class="m-mapsel">
+        <div class="m-mapsel-head">
+          <button class="m-back" id="m-mapback">← Back</button>
+          <div class="m-mapsel-title">CHOOSE A MAP</div>
+        </div>
+        <div class="m-maps-grid" id="m-maps-grid">
+          ${this._mapCard("", "Default Arena", "built-in")}
+        </div>
+      </div>
+    `;
+    content.querySelector("#m-mapback").addEventListener("click", () => this._setTab("play"));
+
+    // Append saved maps from the static manifest (works in dev and production).
+    let maps = [];
+    try {
+      maps = (await (await fetch(`/maps/index.json?t=${Date.now()}`)).json()) || [];
+    } catch {
+      // No manifest yet — only the default arena is available.
+    }
+    const grid = content.querySelector("#m-maps-grid");
+    if (!grid) return; // user navigated away while the list was loading
+    for (const m of maps) {
+      grid.insertAdjacentHTML("beforeend", this._mapCard(m, m, "custom"));
+    }
+
+    grid.querySelectorAll(".m-map-card").forEach((card) =>
+      card.addEventListener("click", () => {
+        this.mapName = card.dataset.map || null;
+        if (mode === "lobby") this._createLobby();
+        else this._deploy(null);
+      })
+    );
+  }
+
+  _mapCard(value, name, sub) {
+    const sel = (this.mapName || "") === value ? "sel" : "";
+    return `
+      <div class="m-map-card ${sel}" data-map="${escapeAttr(value)}">
+        <div class="m-map-play">▶ PLAY</div>
+        <div class="m-map-cname">${escapeHtml(name)}</div>
+        <div class="m-map-csub">${escapeHtml(sub)}</div>
+      </div>`;
   }
 
   // ------------------------------------------------------------- Loadout tab
@@ -160,6 +266,7 @@ export class Menu {
       .querySelectorAll(`.m-gun[data-slot="${slot}"]`)
       .forEach((x) => x.classList.toggle("sel", x.dataset.name === name));
     this._loadPreview(name);
+    saveLoadout({ ...this.loadout }); // persist to the account
   }
 
   _loadPreview(name) {
@@ -180,10 +287,66 @@ export class Menu {
       </div>`;
   }
 
+  // ------------------------------------------------------------- Characters tab
+  _renderCharacters() {
+    const content = this.root.querySelector(".m-content");
+    content.innerHTML = `
+      <div class="m-loadout">
+        <div class="m-preview-wrap">
+          <div id="m-preview-slot"></div>
+          <div class="m-preview-name" id="m-preview-name"></div>
+        </div>
+        <div class="m-guns" id="m-charlist"></div>
+      </div>
+    `;
+
+    if (!this.preview) {
+      this.previewCanvas = document.createElement("canvas");
+      this.previewCanvas.className = "m-preview";
+      this.preview = new GunPreview(this.previewCanvas);
+    }
+    content.querySelector("#m-preview-slot").appendChild(this.previewCanvas);
+
+    const list = content.querySelector("#m-charlist");
+    list.innerHTML = characterList().map((c) => this._charCard(c)).join("");
+    list.querySelectorAll(".m-gun").forEach((el) => {
+      el.addEventListener("click", () => this._selectCharacter(el.dataset.name));
+    });
+
+    this._loadCharPreview(this.character);
+    this.preview.start();
+  }
+
+  _selectCharacter(name) {
+    this.character = name;
+    this.root
+      .querySelectorAll("#m-charlist .m-gun")
+      .forEach((x) => x.classList.toggle("sel", x.dataset.name === name));
+    this._loadCharPreview(name);
+    saveCharacter(name); // persist to the account
+  }
+
+  _loadCharPreview(name) {
+    const cfg = CHARACTERS[name];
+    if (!cfg || !this.preview) return;
+    const nameEl = this.root.querySelector("#m-preview-name");
+    if (nameEl) nameEl.textContent = cfg.displayName;
+    this.preview.load(cfg);
+  }
+
+  _charCard(c) {
+    const sel = this.character === c.name ? "sel" : "";
+    return `
+      <div class="m-gun ${sel}" data-name="${c.name}">
+        <div class="m-gun-name">${escapeHtml(c.displayName)}</div>
+        <div class="m-gun-stats">character</div>
+      </div>`;
+  }
+
   // ------------------------------------------------------------- Lobby view
   async _createLobby() {
     const code = generateCode();
-    this.lobby = new Lobby(code, this.playerName, { host: true });
+    this.lobby = new Lobby(code, this.playerName, { host: true, map: this.mapName });
     this.lobby.onChange = () => this._renderPlayers();
     this.showLobby();
     await this.lobby.join();
@@ -210,6 +373,7 @@ export class Menu {
             <div class="m-code-label">INVITE CODE</div>
             <div class="m-code">${l.code}</div>
             <button class="m-big m-copy" id="m-copy">⧉ COPY CODE</button>
+            <div class="m-lobby-map">MAP · <span id="m-lobby-mapname">Default Arena</span></div>
           </div>
           <div class="m-lobby-right">
             <div class="m-h">PLAYERS (<span id="m-count">1</span>)</div>
@@ -255,11 +419,17 @@ export class Menu {
         </div>`
       )
       .join("");
+
+    // Everyone plays the host's map: joiners follow the host's selection.
+    const hostP = players.find((p) => p.host);
+    if (hostP && !this.lobby.host) this.mapName = hostP.map || null;
+    const mapEl = this.root.querySelector("#m-lobby-mapname");
+    if (mapEl) mapEl.textContent = this.mapName || "Default Arena";
   }
 
   _deploy(lobby) {
     this.hide();
-    this.onDeploy({ ...this.loadout }, lobby);
+    this.onDeploy({ ...this.loadout }, lobby, this.mapName, this.character);
   }
 
   // ------------------------------------------------------------- Styles
@@ -290,6 +460,13 @@ export class Menu {
       }
       #menu .m-tabs button:hover { border-color: #4c9aff; color: #cfe0ff; }
       #menu .m-tabs button.on { background: #1f6feb; color: #fff; border-color: #1f6feb; }
+      #menu .m-user { display: flex; align-items: center; gap: 12px; }
+      #menu .m-uname { font-weight: 700; font-size: 15px; color: #cfe0ff; }
+      #menu .m-logout {
+        padding: 8px 16px; border: 1px solid #2a3a52; border-radius: 9px; cursor: pointer;
+        background: rgba(13,17,23,0.6); color: #8b949e; font-family: inherit; font-weight: 700; font-size: 13px;
+      }
+      #menu .m-logout:hover { border-color: #ff7b72; color: #ff7b72; }
 
       /* Content area */
       #menu .m-content {
@@ -324,6 +501,31 @@ export class Menu {
       #menu .m-join-btn { width: auto; padding-left: 40px; padding-right: 40px; }
       #menu .m-warn { color: #e3b341; font-size: 12px; text-align: center; margin-top: 8px; }
 
+      /* Map select step */
+      #menu .m-mapsel { width: 100%; max-width: 760px; display: flex; flex-direction: column; gap: 20px; }
+      #menu .m-mapsel-head { display: flex; align-items: center; gap: 16px; }
+      #menu .m-mapsel-title { font-size: 22px; font-weight: 800; letter-spacing: 2px; color: #cfe0ff; }
+      #menu .m-back {
+        padding: 10px 18px; border: 1px solid #2a3a52; border-radius: 9px; cursor: pointer;
+        background: rgba(13,17,23,0.6); color: #8b949e; font-family: inherit; font-weight: 700; font-size: 14px;
+      }
+      #menu .m-back:hover { border-color: #4c9aff; color: #cfe0ff; }
+      #menu .m-maps-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+      #menu .m-map-card {
+        position: relative; background: #0d1117; border: 1px solid #2a3a52; border-radius: 14px;
+        padding: 22px 18px; min-height: 96px; cursor: pointer; transition: .12s;
+        display: flex; flex-direction: column; justify-content: center;
+      }
+      #menu .m-map-card:hover { border-color: #4c9aff; transform: translateY(-2px); }
+      #menu .m-map-card.sel { border-color: #4c9aff; box-shadow: 0 0 0 2px #4c9aff inset; }
+      #menu .m-map-cname { font-weight: 800; font-size: 18px; }
+      #menu .m-map-csub { color: #8b949e; font-size: 12px; margin-top: 6px; }
+      #menu .m-map-play {
+        position: absolute; top: 14px; right: 16px; color: #2ea043; font-weight: 800; font-size: 13px;
+        opacity: 0; transition: .12s;
+      }
+      #menu .m-map-card:hover .m-map-play { opacity: 1; }
+
       /* Loadout tab */
       #menu .m-loadout { width: 100%; max-width: 900px; display: flex; flex-direction: column; gap: 16px; }
       #menu .m-subtabs { display: flex; gap: 12px; justify-content: center; }
@@ -353,6 +555,8 @@ export class Menu {
       #menu .m-code-box { text-align: center; background: #0d1117; border: 1px solid #2a3a52; border-radius: 14px; padding: 28px; }
       #menu .m-code-label { color: #8b949e; font-size: 13px; letter-spacing: 3px; }
       #menu .m-code { font-size: 56px; font-weight: 800; letter-spacing: 12px; color: #4c9aff; margin: 14px 0 18px; }
+      #menu .m-lobby-map { margin-top: 16px; color: #8b949e; font-size: 13px; letter-spacing: 1px; }
+      #menu .m-lobby-map span { color: #cfe0ff; font-weight: 700; }
       #menu .m-lobby-right { background: #0d1117; border: 1px solid #2a3a52; border-radius: 14px; padding: 22px; }
       #menu .m-h { color: #7aa7ff; font-size: 13px; letter-spacing: 2px; margin-bottom: 12px; border-bottom: 1px solid #1f2a3a; padding-bottom: 6px; }
       #menu .m-players { display: flex; flex-direction: column; gap: 8px; }

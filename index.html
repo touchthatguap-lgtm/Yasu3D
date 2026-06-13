@@ -145,6 +145,38 @@
         position: fixed; inset: 0; pointer-events: none; z-index: 6; opacity: 0;
         background: radial-gradient(circle, transparent 35%, rgba(255,0,0,0.55) 100%);
       }
+
+      /* Hitmarker kill variant (bigger + brighter) */
+      #hitmarker.kill { transform: translate(-50%, -50%) rotate(45deg) scale(1.7); }
+      #hitmarker.kill::before, #hitmarker.kill::after { background: #ffd24a; }
+
+      /* Spawn protection indicator */
+      #spawn-protect {
+        top: 64px; left: 50%; transform: translateX(-50%);
+        font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
+        color: #6fd3ff; font-size: 14px; font-weight: 700; letter-spacing: 1px;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.8); display: none;
+      }
+
+      /* Kill confirmation popup */
+      #kill-popup {
+        top: 38%; left: 50%; transform: translate(-50%, -50%);
+        font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
+        color: #ffd24a; font-size: 30px; font-weight: 800; letter-spacing: 2px;
+        text-shadow: 0 3px 8px rgba(0,0,0,0.9); opacity: 0; transition: opacity 0.2s;
+      }
+
+      /* Death screen */
+      #death-screen {
+        position: fixed; inset: 0; z-index: 8; display: none;
+        flex-direction: column; align-items: center; justify-content: center;
+        background: rgba(40,0,0,0.55);
+        font-family: ui-monospace, "Cascadia Code", Menlo, monospace; color: #e6edf3;
+      }
+      #death-screen .ds-title { font-size: 64px; font-weight: 800; color: #ff5d5d; letter-spacing: 6px; text-shadow: 0 4px 14px rgba(0,0,0,0.8); }
+      #death-screen .ds-by { font-size: 18px; color: #c9d4e0; margin-top: 10px; }
+      #death-screen .ds-respawn { font-size: 20px; color: #8b949e; margin-top: 26px; }
+      #death-screen .ds-respawn span { color: #fff; font-weight: 800; }
     </style>
   </head>
   <body>
@@ -160,6 +192,13 @@
 
     <div id="killfeed" class="hud"></div>
     <div id="dmg-flash"></div>
+    <div id="spawn-protect" class="hud">🛡 SPAWN PROTECTION</div>
+    <div id="kill-popup" class="hud"></div>
+    <div id="death-screen">
+      <div class="ds-title">ELIMINATED</div>
+      <div class="ds-by" id="ds-by"></div>
+      <div class="ds-respawn">Respawning in <span id="ds-count">3</span>…</div>
+    </div>
 
     <div id="health-wrap" class="hud">
       <div class="label">HEALTH</div>
@@ -182,7 +221,7 @@
       <div class="controls">
         <b>WASD</b> move &nbsp;·&nbsp; <b>Mouse</b> look &nbsp;·&nbsp; <b>Left-click</b> shoot<br />
         <b>Space</b> jump &nbsp;·&nbsp; <b>Shift</b> sprint &nbsp;·&nbsp; <b>R</b> reload &nbsp;·&nbsp; <b>Esc</b> release mouse<br />
-        <span style="color:#7ee787;">Dev: press <b>`</b> (backtick) for the viewmodel editor</span>
+        <span id="dev-hint" style="color:#7ee787; display:none;">Dev: press <b>`</b> (backtick) for the viewmodel editor</span>
       </div>
       <button id="leave-match">⏏ Leave Match</button>
     </div>

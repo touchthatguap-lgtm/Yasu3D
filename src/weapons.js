@@ -28,6 +28,29 @@ export const WEAPONS = {
     },
   },
 
+  scar: {
+    name: "scar",
+    displayName: "SCAR-H",
+    slot: "primary",
+    model: "/models/guns/Scar.glb",
+
+    automatic: true,
+    magSize: 25,
+    reserve: 75,
+    fireCooldown: 0.13, // slower cadence than the AR
+    reloadTime: 2.0,
+    bodyDamage: 42, // hits harder per shot
+    headDamage: 100,
+
+    viewmodel: {
+      length: 0.78,
+      position: [0.28, -0.24, -0.42],
+      extraRotation: [0, 0, 0],
+      flip: false,
+      muzzleOffset: [0.08, 0, 0],
+    },
+  },
+
   pistol: {
     name: "pistol",
     displayName: "Pistol",

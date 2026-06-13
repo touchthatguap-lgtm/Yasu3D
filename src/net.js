@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { loadModel } from "./assets.js";
+import { CHARACTERS, DEFAULT_CHARACTER } from "./characters.js";
 
 // Syncs other players over the lobby's Realtime channel:
 //  - broadcasts our position/rotation ~15x/sec
@@ -25,8 +27,10 @@ export class NetPlayers {
     this.clock = 0;
 
     this.localName = "Player";
-    this.onDamaged = null; // ({ from, fromName, damage, headshot }) when we get hit
-    this.onKill = null;    // (deathPayload) when anyone dies
+    this.localChar = DEFAULT_CHARACTER; // which character avatar we broadcast
+    this.onDamaged = null;    // ({ from, fromName, damage, headshot }) when we get hit
+    this.onKill = null;       // (deathPayload) when anyone dies
+    this.onRemoteShot = null; // (shotPayload) when another player fires
 
     if (this.enabled) {
       lobby.onState = (s) => this._onState(s);
@@ -85,7 +89,7 @@ export class NetPlayers {
   _onState(s) {
     if (!s || s.id === this.localId) return;
     let r = this.remotes.get(s.id);
-    if (!r) r = this._spawn(s.id, s.name);
+    if (!r) r = this._spawn(s.id, s.name, s.char);
     r.tgt.set(s.x, s.y, s.z);
     r.tgtYaw = s.yaw;
     r.last = this.clock;
@@ -101,28 +105,26 @@ export class NetPlayers {
       new THREE.Vector3(s.sx, s.sy, s.sz),
       new THREE.Vector3(s.ex, s.ey, s.ez)
     );
+    if (this.onRemoteShot) this.onRemoteShot(s);
   }
 
   // --- Remote avatar ---
-  _spawn(id, name) {
+  _spawn(id, name, charName) {
     const group = new THREE.Group();
-    const mat = new THREE.MeshStandardMaterial({ color: REMOTE_COLOR, roughness: 0.5 });
-    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.4, 0.9, 6, 12), mat);
+
+    // Invisible hitbox (body + head) used only for raycasting. Kept constant
+    // regardless of the visible character model so hits/headshots are fair.
+    const hitMat = new THREE.MeshBasicMaterial();
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.4, 0.9, 6, 12), hitMat);
     body.position.y = 0.9;
-    body.castShadow = true;
+    body.visible = false; // invisible meshes are still raycast by Three.js
     body.userData = { netId: id, part: "body" };
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 12), mat);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 12), hitMat);
     head.position.y = 1.7;
-    head.castShadow = true;
+    head.visible = false;
     head.userData = { netId: id, part: "head" };
     this.hitMeshes.push(body, head);
-    // A small nose so you can read which way they're facing.
-    const nose = new THREE.Mesh(
-      new THREE.BoxGeometry(0.12, 0.12, 0.25),
-      new THREE.MeshStandardMaterial({ color: 0xffffff })
-    );
-    nose.position.set(0, 1.7, -0.32);
-    group.add(body, head, nose);
+    group.add(body, head);
     this.scene.add(group);
 
     const label = document.createElement("div");
@@ -132,7 +134,6 @@ export class NetPlayers {
 
     const r = {
       group,
-      mat,
       name: name || "Player",
       label,
       cur: new THREE.Vector3(),
@@ -141,14 +142,74 @@ export class NetPlayers {
       tgtYaw: 0,
       last: this.clock,
       flash: 0,
+      removed: false,
+      visual: null,    // the loaded character model
+      tintMats: [],    // materials flashed white on hit
     };
     this.remotes.set(id, r);
+    this._loadCharacter(r, charName);
     return r;
+  }
+
+  // Load the player's selected character model and add it to their avatar group.
+  // Async (model files), so the hitbox already exists for hit detection.
+  async _loadCharacter(r, charName) {
+    const cfg = CHARACTERS[charName] || CHARACTERS[DEFAULT_CHARACTER];
+    let visual;
+    try {
+      visual = cfg.build ? cfg.build() : (await loadModel(cfg.model)).scene;
+    } catch (e) {
+      console.warn("[Yasu3D] character load failed:", charName, e.message);
+      visual = CHARACTERS[DEFAULT_CHARACTER].build();
+    }
+    if (r.removed) {
+      // The player left while the model was loading — throw it away.
+      this._disposeTree(visual);
+      return;
+    }
+    if (cfg.model) this._fitCharacter(visual, cfg);
+
+    // Collect materials we can flash white when this player is hit.
+    visual.traverse((n) => {
+      if (!n.isMesh) return;
+      n.castShadow = true;
+      const mats = Array.isArray(n.material) ? n.material : [n.material];
+      for (const m of mats) if (m && m.emissive) r.tintMats.push(m);
+    });
+
+    r.visual = visual;
+    r.group.add(visual);
+  }
+
+  // Scale an imported model to a target height, drop its feet to y=0, recenter
+  // it horizontally, and apply a facing correction.
+  _fitCharacter(visual, cfg) {
+    const box = new THREE.Box3().setFromObject(visual);
+    const size = box.getSize(new THREE.Vector3());
+    visual.scale.setScalar((cfg.height || 1.9) / (size.y || 1));
+    if (cfg.faceFix) visual.rotateY(cfg.faceFix);
+
+    box.setFromObject(visual);
+    const center = box.getCenter(new THREE.Vector3());
+    visual.position.x -= center.x;
+    visual.position.z -= center.z;
+    visual.position.y -= box.min.y;
+  }
+
+  _disposeTree(obj) {
+    obj.traverse((n) => {
+      if (n.isMesh) {
+        n.geometry.dispose();
+        if (Array.isArray(n.material)) n.material.forEach((m) => m.dispose());
+        else n.material.dispose();
+      }
+    });
   }
 
   _remove(id) {
     const r = this.remotes.get(id);
     if (!r) return;
+    r.removed = true; // signal any in-flight character load to bail
     this.scene.remove(r.group);
     r.group.traverse((n) => {
       if (n.isMesh) {
@@ -179,6 +240,7 @@ export class NetPlayers {
     this.lobby.sendState({
       id: this.localId,
       name,
+      char: this.localChar,
       x: +player.pos.x.toFixed(2),
       y: +player.pos.y.toFixed(2),
       z: +player.pos.z.toFixed(2),
@@ -213,7 +275,7 @@ export class NetPlayers {
       if (r.flash > 0) {
         r.flash = Math.max(0, r.flash - dt);
         const k = r.flash / 0.12;
-        r.mat.emissive.setRGB(k, k, k);
+        for (const m of r.tintMats) m.emissive.setRGB(k, k, k);
       }
       // Shortest-path yaw interpolation.
       let dy = r.tgtYaw - r.yaw;

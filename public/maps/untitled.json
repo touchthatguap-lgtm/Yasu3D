@@ -1,0 +1,32 @@
+{
+  "name": "untitled",
+  "objects": [
+    {
+      "model": "/models/structures/fps_2Ftps_Map.glb",
+      "position": [
+        0,
+        16.61,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        5.989,
+        3.946,
+        4.871
+      ],
+      "color": null
+    }
+  ],
+  "spawns": [
+    {
+      "x": -45.332,
+      "y": 15.915,
+      "z": 29.499,
+      "yaw": 0
+    }
+  ]
+}

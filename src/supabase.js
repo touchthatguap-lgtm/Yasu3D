@@ -12,4 +12,7 @@ if (!url || !anonKey) {
   );
 }
 
-export const supabase = createClient(url, anonKey);
+// True only when both keys are present, so features can degrade gracefully.
+export const supabaseReady = Boolean(url && anonKey);
+
+export const supabase = createClient(url || "https://placeholder.supabase.co", anonKey || "placeholder");

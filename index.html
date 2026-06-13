@@ -65,6 +65,12 @@
       #ammo-wrap .ammo-now { font-size: 44px; font-weight: 800; line-height: 1; }
       #ammo-wrap .ammo-reserve { font-size: 20px; color: #8b949e; }
       #ammo-wrap .reloading { font-size: 14px; color: #ffd54a; }
+      #ammo-wrap .weapon-name { font-size: 15px; color: #c9d4e0; font-weight: 700; margin-bottom: 2px; }
+      #ammo-wrap .weapon-swap { font-size: 11px; color: #6f7d8c; margin-top: 4px; }
+
+      /* HUD hidden until a match starts */
+      .hud { display: none; }
+      body.playing .hud { display: block; }
 
       /* Top-center: score */
       #score-wrap { left: 50%; top: 18px; transform: translateX(-50%); text-align: center; }
@@ -89,6 +95,13 @@
       #lock-overlay .controls { margin-top: 30px; font-size: 13px; color: #8b949e; line-height: 1.7; text-align: center; }
       #lock-overlay .controls b { color: #c9d4e0; }
       #lock-overlay.hidden { display: none; }
+      #leave-match {
+        margin-top: 26px; padding: 12px 30px; font-size: 15px; font-weight: 700;
+        font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
+        background: #3d1418; color: #ff7b72; border: 1px solid #b3322c; border-radius: 8px;
+        cursor: pointer;
+      }
+      #leave-match:hover { background: #571b20; }
 
       /* Floating combat text */
       #fx-layer {
@@ -104,6 +117,34 @@
         text-shadow: 0 2px 4px rgba(0, 0, 0, 0.9);
         will-change: transform, opacity;
       }
+      .net-name {
+        position: absolute;
+        transform: translate(-50%, -50%);
+        font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
+        font-size: 13px; font-weight: 700; color: #ffb3b3;
+        white-space: nowrap; text-shadow: 0 2px 4px rgba(0,0,0,0.9);
+      }
+
+      /* Kill feed (top-right) */
+      #killfeed {
+        top: 16px; right: 16px; text-align: right;
+        font-family: ui-monospace, "Cascadia Code", Menlo, monospace;
+        font-size: 14px; color: #e6edf3;
+      }
+      #killfeed .kf {
+        margin: 3px 0; padding: 4px 10px; display: inline-block;
+        background: rgba(13,17,23,0.7); border-radius: 5px;
+        animation: kf-in 0.15s ease-out;
+      }
+      #killfeed .kf .killer { color: #7ee787; font-weight: 700; }
+      #killfeed .kf .victim { color: #ff7b72; font-weight: 700; }
+      @keyframes kf-in { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; } }
+
+      /* Damage flash (full-screen red vignette when you take a hit) */
+      #dmg-flash {
+        position: fixed; inset: 0; pointer-events: none; z-index: 6; opacity: 0;
+        background: radial-gradient(circle, transparent 35%, rgba(255,0,0,0.55) 100%);
+      }
     </style>
   </head>
   <body>
@@ -113,9 +154,12 @@
     <div id="hitmarker" class="hud"></div>
 
     <div id="score-wrap" class="hud">
-      <div class="big">Kills: <span id="score">0</span></div>
-      <div class="sub">34 dmg body &middot; headshots one-shot</div>
+      <div class="big">Kills: <span id="score">0</span> &middot; Deaths: <span id="deaths">0</span></div>
+      <div class="sub">eliminate other players &middot; headshots one-shot</div>
     </div>
+
+    <div id="killfeed" class="hud"></div>
+    <div id="dmg-flash"></div>
 
     <div id="health-wrap" class="hud">
       <div class="label">HEALTH</div>
@@ -123,20 +167,24 @@
     </div>
 
     <div id="ammo-wrap" class="hud">
+      <div class="weapon-name" id="weapon-name">Assault Rifle</div>
       <span class="ammo-now" id="ammo">30</span><span class="ammo-reserve">/<span id="reserve">90</span></span>
       <div class="reloading" id="reloading" style="visibility:hidden;">RELOADING…</div>
+      <div class="weapon-swap">1 / 2 / Q to swap</div>
     </div>
 
     <div id="fx-layer"></div>
 
-    <div id="lock-overlay">
+    <div id="lock-overlay" class="hidden">
       <h1>YASU<span style="color:#4c9aff">3D</span></h1>
       <div class="tag">browser FPS &middot; prototype</div>
       <div class="play">▶ CLICK TO PLAY</div>
       <div class="controls">
         <b>WASD</b> move &nbsp;·&nbsp; <b>Mouse</b> look &nbsp;·&nbsp; <b>Left-click</b> shoot<br />
-        <b>Space</b> jump &nbsp;·&nbsp; <b>Shift</b> sprint &nbsp;·&nbsp; <b>R</b> reload &nbsp;·&nbsp; <b>Esc</b> release mouse
+        <b>Space</b> jump &nbsp;·&nbsp; <b>Shift</b> sprint &nbsp;·&nbsp; <b>R</b> reload &nbsp;·&nbsp; <b>Esc</b> release mouse<br />
+        <span style="color:#7ee787;">Dev: press <b>`</b> (backtick) for the viewmodel editor</span>
       </div>
+      <button id="leave-match">⏏ Leave Match</button>
     </div>
 
     <script type="module" src="/src/main.js"></script>

@@ -94,6 +94,27 @@ export function buildWorld(scene) {
   return { colliders, targets, solids, arena: ARENA };
 }
 
+// Per-frame target upkeep: hit-flash decay + respawn. Called once from main
+// (not per-weapon, so it isn't double-stepped when you carry two guns).
+export function updateTargets(targets, dt) {
+  for (const target of targets) {
+    if (target.flash > 0) {
+      target.flash = Math.max(0, target.flash - dt);
+      const k = target.flash / 0.12;
+      target.mat.emissive.setRGB(0.38 + k * 0.6, 0.18 + k * 0.6, k * 0.6);
+    }
+    if (!target.alive) {
+      target.respawnAt -= dt;
+      if (target.respawnAt <= 0) {
+        target.alive = true;
+        target.health = target.maxHealth;
+        target.mesh.visible = true;
+        target.mat.emissive.setHex(0x612f00);
+      }
+    }
+  }
+}
+
 const TARGET_HEIGHT = 1.8;
 
 function makeTarget(scene, solids, x, z) {

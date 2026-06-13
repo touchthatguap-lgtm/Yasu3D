@@ -1,0 +1,44 @@
+{
+  "rifle": {
+    "viewmodel": {
+      "length": 0.72,
+      "position": [
+        0.28,
+        -0.24,
+        -0.42
+      ],
+      "extraRotation": [
+        0,
+        0,
+        0
+      ],
+      "flip": false,
+      "muzzleOffset": [
+        0.03266527159276954,
+        0.04881393866995628,
+        -0.1
+      ]
+    }
+  },
+  "pistol": {
+    "viewmodel": {
+      "length": 0.4,
+      "position": [
+        0.26,
+        -0.22,
+        -0.4
+      ],
+      "extraRotation": [
+        0,
+        0,
+        0
+      ],
+      "flip": false,
+      "muzzleOffset": [
+        -0.0028175433575732423,
+        0.08875261576355692,
+        0
+      ]
+    }
+  }
+}
